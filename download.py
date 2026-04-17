@@ -8,7 +8,7 @@ from torchvision import datasets
 from tqdm.auto import tqdm
 
 
-def download_and_preview(dataset_name, dataset_folder="data", num_images_per_split=5, keep_zip=False):
+def download_and_preview(dataset_name, dataset_folder="data", num_images_per_split=5, keep_zip=False, preview=False):
     print(f"Dataset '{dataset_name}'")
     url = f"http://efrosgans.eecs.berkeley.edu/cyclegan/datasets/{dataset_name}.zip"
     download_path = os.path.join(dataset_folder, f"{dataset_name}.zip")
@@ -66,14 +66,15 @@ def download_and_preview(dataset_name, dataset_folder="data", num_images_per_spl
         split_folder = os.path.join(target_folder, split_name)
         print(f" --> size: {len(os.listdir(split_folder))}")
 
-        plt.subplots(1, num_images_per_split, figsize=(5 * num_images_per_split, 5))
-        plt.suptitle(f"{dataset_name} ~ {split_name}", y=0.95)
-        for i, dataset_ind in enumerate(inds_to_show[split_ind]):
-            plt.subplot(1, num_images_per_split, i + 1)
-            plt.imshow(dataset[dataset_ind][0])
-            plt.xticks([])
-            plt.yticks([])
-        plt.show()
+        if preview:
+            plt.subplots(1, num_images_per_split, figsize=(5 * num_images_per_split, 5))
+            plt.suptitle(f"{dataset_name} ~ {split_name}", y=0.95)
+            for i, dataset_ind in enumerate(inds_to_show[split_ind]):
+                plt.subplot(1, num_images_per_split, i + 1)
+                plt.imshow(dataset[dataset_ind][0])
+                plt.xticks([])
+                plt.yticks([])
+            plt.show()
 
     print("\n----------------------------\n")
     return target_folder
