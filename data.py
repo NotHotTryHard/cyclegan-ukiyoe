@@ -12,12 +12,12 @@ from torch.utils.data import Dataset, DataLoader
 class ImageDatasetNoLabel(Dataset):
     def __init__(self, class_path, transforms=None):
         super().__init__()
-        class_label = class_path.split('/')[-1]
+        self.class_label = class_path.split('/')[-1]
         self.img_paths = [os.path.join(class_path, img_name) for img_name in os.listdir(class_path)]
         self.transforms = transforms
 
     def __getitem__(self, index):
-        img = cv2.imread(self.img_paths[index])[:, :, ::-1]
+        img = cv2.cvtColor(cv2.imread(self.img_paths[index]), cv2.COLOR_BGR2RGB)
         if self.transforms is not None:
             img = self.transforms(img)
         return img
@@ -43,12 +43,8 @@ class DataLoadersClass:
 
 
 def get_channel_statistics(dataset):
-    """
-    Функция для получения поканальных статистик (среднее и отклонение) по датасету
-    """
     channel_sum = None
     channel_sq_sum = None
-
     pixel_count = 0
 
     for img in dataset:
@@ -68,21 +64,21 @@ def get_channel_statistics(dataset):
     return channel_mean, channel_std
 
 
-def get_transforms(channel_mean, channel_std, **hyperparams):
+def get_transforms(channel_mean, channel_std, upscale_size=286, crop_size=256):
     train_transform = tr.Compose([
         tr.ToPILImage(),
-        tr.Resize((hyperparams['upscale_size'], hyperparams['upscale_size'])),
-        tr.RandomCrop(hyperparams['crop_size']),
+        tr.Resize((upscale_size, upscale_size)),
+        tr.RandomCrop(crop_size),
         tr.RandomHorizontalFlip(p=0.5),
         tr.ToTensor(),
-        tr.Normalize(channel_mean, channel_std)
+        tr.Normalize(channel_mean, channel_std),
     ])
 
     val_transform = tr.Compose([
         tr.ToPILImage(),
-        tr.Resize((hyperparams['crop_size'], hyperparams['crop_size'])),
+        tr.Resize((crop_size, crop_size)),
         tr.ToTensor(),
-        tr.Normalize(channel_mean, channel_std)
+        tr.Normalize(channel_mean, channel_std),
     ])
 
     def de_normalize(image):
@@ -95,11 +91,9 @@ def get_transforms(channel_mean, channel_std, **hyperparams):
 
 def show_examples(dataset, transform, de_norm, num_per_image=3, image_index=0, title=""):
     fig, ax = plt.subplots(1, 1 + num_per_image, figsize=(5 * (1 + num_per_image), 5))
-
     image = dataset[image_index]
 
     plt.suptitle(title, y=0.95)
-
     plt.subplot(1, 1 + num_per_image, 1)
     plt.imshow(image)
     plt.title("original")
@@ -111,19 +105,26 @@ def show_examples(dataset, transform, de_norm, num_per_image=3, image_index=0, t
     plt.show()
 
 
-def build_datasets(target_folder, train_transform_a, val_transform_a, train_transform_b, val_transform_b):
+def build_datasets(
+    target_folder,
+    train_transform_a,
+    val_transform_a,
+    train_transform_b,
+    val_transform_b,
+):
     return DatasetsClass(
         train_a=ImageDatasetNoLabel(os.path.join(target_folder, "trainA"), transforms=train_transform_a),
-        train_b=ImageDatasetNoLabel(os.path.join(target_folder, "trainB"), transforms=val_transform_b),
+        train_b=ImageDatasetNoLabel(os.path.join(target_folder, "trainB"), transforms=train_transform_b),
         test_a=ImageDatasetNoLabel(os.path.join(target_folder, "testA"), transforms=val_transform_a),
         test_b=ImageDatasetNoLabel(os.path.join(target_folder, "testB"), transforms=val_transform_b),
     )
 
 
-def build_dataloaders(ds: DatasetsClass, batch_size=50):
+def build_dataloaders(ds: DatasetsClass, batch_size=1, num_workers=4, pin_memory=True):
+    common = dict(num_workers=num_workers, pin_memory=pin_memory, persistent_workers=num_workers > 0)
     return DataLoadersClass(
-        train_a=DataLoader(ds.train_a, batch_size=batch_size, shuffle=True, drop_last=True),
-        train_b=DataLoader(ds.train_b, batch_size=batch_size, shuffle=True, drop_last=True),
-        test_a=DataLoader(ds.test_a, batch_size=batch_size, shuffle=False, drop_last=True),
-        test_b=DataLoader(ds.test_b, batch_size=batch_size, shuffle=False, drop_last=True),
+        train_a=DataLoader(ds.train_a, batch_size=batch_size, shuffle=True, drop_last=True, **common),
+        train_b=DataLoader(ds.train_b, batch_size=batch_size, shuffle=True, drop_last=True, **common),
+        test_a=DataLoader(ds.test_a, batch_size=batch_size, shuffle=False, drop_last=True, **common),
+        test_b=DataLoader(ds.test_b, batch_size=batch_size, shuffle=False, drop_last=True, **common),
     )
