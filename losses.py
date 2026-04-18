@@ -73,11 +73,13 @@ class FullDiscriminatorLoss(nn.Module):
 
 
 class FullGeneratorLoss(nn.Module):
-    def __init__(self, lambda_value=10., is_mse=True, reduction='mean'):
+    def __init__(self, lambda_cyc=10., lambda_idt=0., is_mse=True, reduction='mean'):
         super(FullGeneratorLoss, self).__init__()
         self.adversarial_loss_func = AdversarialLossMSE(reduction=reduction) if is_mse else AdversarialLossCE(reduction=reduction)
         self.cycle_loss_func = CycleConsistencyLoss(reduction=reduction)
-        self.lambda_value = lambda_value
+        self.identity_loss_func = nn.L1Loss(reduction=reduction)
+        self.lambda_cyc = lambda_cyc
+        self.lambda_idt = lambda_idt
 
     def forward(
         self,
@@ -87,6 +89,8 @@ class FullGeneratorLoss(nn.Module):
         b_fake_pred,
         rec_a,
         rec_b,
+        idt_a=None,
+        idt_b=None,
     ):
         loss_gan_a2b = self.adversarial_loss_func(b_fake_pred)
         loss_gan_b2a = self.adversarial_loss_func(a_fake_pred)
@@ -95,4 +99,11 @@ class FullGeneratorLoss(nn.Module):
         loss_cyc_b = self.cycle_loss_func(imgs_b, rec_b)
         loss_cyc = loss_cyc_a + loss_cyc_b
 
-        return loss_gan_a2b + loss_gan_b2a + self.lambda_value * loss_cyc
+        total = loss_gan_a2b + loss_gan_b2a + self.lambda_cyc * loss_cyc
+
+        # identity loss: G_ba(a) ≈ a, G_ab(b) ≈ b
+        if self.lambda_idt > 0 and idt_a is not None and idt_b is not None:
+            loss_idt = self.identity_loss_func(idt_a, imgs_a) + self.identity_loss_func(idt_b, imgs_b)
+            total = total + self.lambda_idt * loss_idt
+
+        return total

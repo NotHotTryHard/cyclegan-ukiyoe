@@ -40,7 +40,9 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--gpu", type=int, required=True, help="(cuda:<gpu>)")
     p.add_argument("--run-name", type=str, required=True, help="runs/<name>")
+    p.add_argument("--runs-root", type=str, default="runs")
     p.add_argument("--dataset", type=str, default="ukiyoe2photo")
+    p.add_argument("--dataset-root", type=str, default="data")
 
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--decay-start", type=int, default=50)
@@ -48,6 +50,8 @@ def parse_args():
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--lambda-cyc", type=float, default=10.0)
+    p.add_argument("--lambda-idt", type=float, default=0.0,
+                   help="identity loss weight (0 = выкл; в статье для photo<->painting рекомендуют 0.5 * lambda_cyc)")
     p.add_argument("--is-mse", action="store_true", default=True, help="LSGAN (MSE) вместо BCE")
     p.add_argument("--no-mse", dest="is_mse", action="store_false")
 
@@ -112,14 +116,21 @@ def main():
     else:
         log(f"dataset already present at {target_folder}")
 
+    # модельные константы как в статье CycleGAN
+    UPSCALE_SIZE = 286
+    CROP_SIZE = 256
+    NGF = 64
+    NDF = 64
+    N_RES_BLOCKS = 9
+
     # нормализация в [-1, 1] под Tanh
     norm_mean = [0.5, 0.5, 0.5]
     norm_std = [0.5, 0.5, 0.5]
     train_tf_a, val_tf_a, de_norm_a = get_transforms(
-        norm_mean, norm_std, upscale_size=args.upscale_size, crop_size=args.crop_size,
+        norm_mean, norm_std, upscale_size=UPSCALE_SIZE, crop_size=CROP_SIZE,
     )
     train_tf_b, val_tf_b, de_norm_b = get_transforms(
-        norm_mean, norm_std, upscale_size=args.upscale_size, crop_size=args.crop_size,
+        norm_mean, norm_std, upscale_size=UPSCALE_SIZE, crop_size=CROP_SIZE,
     )
 
     ds = build_datasets(target_folder, train_tf_a, val_tf_a, train_tf_b, val_tf_b)
@@ -127,17 +138,18 @@ def main():
     log(f"sizes: train_a={len(ds.train_a)} train_b={len(ds.train_b)} "
         f"test_a={len(ds.test_a)} test_b={len(ds.test_b)}")
 
-    # модель и оптимизаторы
-    model = CycleGAN(
-        ngf=args.ngf, ndf=args.ndf, n_res_blocks=args.n_res_blocks,
-    ).to(device)
+    model = CycleGAN(ngf=NGF, ndf=NDF, n_res_blocks=N_RES_BLOCKS).to(device)
 
     opt_g, opt_d = make_optimizers(model, lr=args.lr)
     sched_g = make_linear_decay_scheduler(opt_g, args.epochs, args.decay_start)
     sched_d = make_linear_decay_scheduler(opt_d, args.epochs, args.decay_start)
 
     criterion_d = FullDiscriminatorLoss(is_mse=args.is_mse)
-    criterion_g = FullGeneratorLoss(lambda_value=args.lambda_cyc, is_mse=args.is_mse)
+    criterion_g = FullGeneratorLoss(
+        lambda_cyc=args.lambda_cyc,
+        lambda_idt=args.lambda_idt,
+        is_mse=args.is_mse,
+    )
 
     # resume
     starting_epoch = 0

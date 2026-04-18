@@ -37,7 +37,15 @@ def train_one_epoch(model, opt_g, opt_d, loader_a, loader_b, criterion_g, criter
         fake_a, fake_b, rec_a, rec_b = model(batch_a, batch_b)
         a_fake_pred_g = model.D_a(fake_a)
         b_fake_pred_g = model.D_b(fake_b)
-        loss_g = criterion_g(batch_a, batch_b, a_fake_pred_g, b_fake_pred_g, rec_a, rec_b)
+
+        # identity forward только если нужен
+        if getattr(criterion_g, "lambda_idt", 0.0) > 0:
+            idt_a = model.G_ba(batch_a)
+            idt_b = model.G_ab(batch_b)
+        else:
+            idt_a = idt_b = None
+
+        loss_g = criterion_g(batch_a, batch_b, a_fake_pred_g, b_fake_pred_g, rec_a, rec_b, idt_a, idt_b)
         loss_g.backward()
         opt_g.step()
 
@@ -73,8 +81,14 @@ def validate(model, loader_a, loader_b, criterion_d, criterion_g, device):
             batch_a, batch_b, fake_a, fake_b,
         )
 
+        if getattr(criterion_g, "lambda_idt", 0.0) > 0:
+            idt_a = model.G_ba(batch_a)
+            idt_b = model.G_ab(batch_b)
+        else:
+            idt_a = idt_b = None
+
         loss_d = criterion_d(a_real_pred, a_fake_pred, b_real_pred, b_fake_pred)
-        loss_g = criterion_g(batch_a, batch_b, a_fake_pred, b_fake_pred, rec_a, rec_b)
+        loss_g = criterion_g(batch_a, batch_b, a_fake_pred, b_fake_pred, rec_a, rec_b, idt_a, idt_b)
 
         val_data["loss D"].append(loss_d.item())
         val_data["loss G"].append(loss_g.item())
