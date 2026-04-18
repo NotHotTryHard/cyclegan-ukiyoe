@@ -1,5 +1,6 @@
 import json
 import os
+import random
 from collections import defaultdict
 from itertools import chain
 
@@ -21,7 +22,33 @@ def collect_images(loader, num_images, device):
     return torch.cat(collected, dim=0)[:num_images].to(device)
 
 
-def train_one_epoch(model, opt_g, opt_d, loader_a, loader_b, criterion_g, criterion_d, device):
+class ImageCache:
+    def __init__(self, cache_size=50, cache_prob=0.5):
+        self.cache_size = cache_size
+        self.cache_prob = cache_prob
+        self.images = []
+
+    @torch.no_grad()
+    def query(self, images):
+        if self.cache_size == 0:
+            return images
+        out = []
+        for img in images:
+            img = img.unsqueeze(0)
+            if len(self.images) < self.cache_size:
+                self.images.append(img.clone())
+                out.append(img)
+            elif random.random() < self.cache_prob:
+                idx = random.randint(0, self.cache_size - 1)
+                old = self.images[idx].clone()
+                self.images[idx] = img.clone()
+                out.append(old)
+            else:
+                out.append(img)
+        return torch.cat(out, dim=0)
+
+
+def train_one_epoch(model, opt_g, opt_d, loader_a, loader_b, criterion_g, criterion_d, device, pool_a=None, pool_b=None):
     model.train()
     losses_g, losses_d = [], []
 
@@ -38,7 +65,6 @@ def train_one_epoch(model, opt_g, opt_d, loader_a, loader_b, criterion_g, criter
         a_fake_pred_g = model.D_a(fake_a)
         b_fake_pred_g = model.D_b(fake_b)
 
-        # identity forward только если нужен
         if getattr(criterion_g, "lambda_idt", 0.0) > 0:
             idt_a = model.G_ba(batch_a)
             idt_b = model.G_ab(batch_b)
@@ -49,10 +75,12 @@ def train_one_epoch(model, opt_g, opt_d, loader_a, loader_b, criterion_g, criter
         loss_g.backward()
         opt_g.step()
 
-        # D step (с detached fake-ами)
+        # D step — fake из image pool c p=0.5
         opt_d.zero_grad(set_to_none=True)
+        fake_a_for_d = pool_a.query(fake_a.detach()) if pool_a is not None else fake_a.detach()
+        fake_b_for_d = pool_b.query(fake_b.detach()) if pool_b is not None else fake_b.detach()
         a_real_pred, b_real_pred, a_fake_pred, b_fake_pred = model.discriminate(
-            batch_a, batch_b, fake_a.detach(), fake_b.detach(),
+            batch_a, batch_b, fake_a_for_d, fake_b_for_d,
         )
         loss_d = criterion_d(a_real_pred, a_fake_pred, b_real_pred, b_fake_pred)
         loss_d.backward()
@@ -128,12 +156,12 @@ def save_sample_grid(model, num_images, loader_a, loader_b, de_norm_a, de_norm_b
         r = i
         axes[r, 0].imshow(de_norm_a(imgs_a[i])); axes[r, 0].set_title("A: original")
         axes[r, 1].imshow(de_norm_b(fake_b[i])); axes[r, 1].set_title("A -> B")
-        axes[r, 2].imshow(de_norm_a(rec_a[i])); axes[r, 2].set_title("A recon")
+        axes[r, 2].imshow(de_norm_a(rec_a[i])); axes[r, 2].set_title("B: reconstruction")
     for i in range(n):
         r = n + i
         axes[r, 0].imshow(de_norm_b(imgs_b[i])); axes[r, 0].set_title("B: original")
         axes[r, 1].imshow(de_norm_a(fake_a[i])); axes[r, 1].set_title("B -> A")
-        axes[r, 2].imshow(de_norm_b(rec_b[i])); axes[r, 2].set_title("B recon")
+        axes[r, 2].imshow(de_norm_b(rec_b[i])); axes[r, 2].set_title("B: reconstruction")
 
     for ax in axes.flatten():
         ax.set_xticks([]); ax.set_yticks([])
@@ -248,6 +276,7 @@ def learning_loop(
     plots=None,
     starting_epoch=0,
     log_fn=print,
+    pool_size=50,
 ):
     """
     Кладёт под run_dir:
@@ -258,6 +287,10 @@ def learning_loop(
     """
     os.makedirs(os.path.join(run_dir, "images"), exist_ok=True)
     os.makedirs(os.path.join(run_dir, "chkp"), exist_ok=True)
+
+    # image pool'ы на весь прогон — живут через все эпохи
+    pool_a = ImageCache(cache_size=pool_size) if pool_size > 0 else None
+    pool_b = ImageCache(cache_size=pool_size) if pool_size > 0 else None
 
     if plots is None:
         plots = {
@@ -276,6 +309,7 @@ def learning_loop(
             model, optimizer_g, optimizer_d,
             train_loader_a, train_loader_b,
             criterion_g, criterion_d, device,
+            pool_a=pool_a, pool_b=pool_b,
         )
         plots["train G"].append(loss_g)
         plots["train D"].append(loss_d)

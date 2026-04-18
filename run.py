@@ -5,14 +5,8 @@
   # один процесс на cuda:0
   python run.py --gpu 0 --run-name exp_baseline --epochs 200
 
-  # несколько независимых прогонов на 8×A100 параллельно (каждый на своей карте)
-  for i in 0 1 2 3 4 5 6 7; do
-      python run.py --gpu $i --run-name exp$i --epochs 200 &
-  done
-  wait
-
 Каждый прогон пишет всё под runs/<run_name>/:
-  images/epoch_XXXX.png  — история генераций
+  images/epoch_XXXX.png,
   chkp/last.pt, chkp/epoch_XXXX.pt
   losses.png, plots.json, log.txt, config.json
 """
@@ -44,20 +38,20 @@ def parse_args():
     p.add_argument("--dataset", type=str, default="ukiyoe2photo")
     p.add_argument("--dataset-root", type=str, default="data")
 
-    p.add_argument("--epochs", type=int, default=100)
-    p.add_argument("--decay-start", type=int, default=50)
+    p.add_argument("--epochs", type=int, default=200)
+    p.add_argument("--decay-start", type=int, default=100)
     p.add_argument("--batch-size", type=int, default=1)  # больше - плохо
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--lambda-cyc", type=float, default=10.0)
-    p.add_argument("--lambda-idt", type=float, default=0.0,
-                   help="identity loss weight (0 = выкл; в статье для photo<->painting рекомендуют 0.5 * lambda_cyc)")
+    p.add_argument("--lambda-idt", type=float, default=0.0, help="baseline: 0.5 * lambda_cyc)")
+    p.add_argument("--pool-size", type=int, default=50, help="image pool size")
     p.add_argument("--is-mse", action="store_true", default=True, help="LSGAN (MSE) вместо BCE")
     p.add_argument("--no-mse", dest="is_mse", action="store_false")
 
     p.add_argument("--val-every", type=int, default=1)
-    p.add_argument("--images-every", type=int, default=1)
-    p.add_argument("--images-per-validation", type=int, default=3)
+    p.add_argument("--images-every", type=int, default=5)
+    p.add_argument("--images-per-validation", type=int, default=10)
     p.add_argument("--save-every", type=int, default=5)
 
     p.add_argument("--resume", type=str, default=None, help="chpt_path")
@@ -186,6 +180,7 @@ def main():
         plots=plots,
         starting_epoch=starting_epoch,
         log_fn=log,
+        pool_size=args.pool_size,
     )
 
     log("done")
